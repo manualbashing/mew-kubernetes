@@ -1,0 +1,79 @@
+# -*- mode: ruby -*-
+# vi:set ft=ruby sw=2 ts=2 sts=2:
+
+# Define the number of master and worker nodes
+NUM_MASTER_NODE = 1 # Enter a value between 1 and 3
+NUM_WORKER_NODE = 2 # Enter a value between 1 and ... how many your hypervisor can handle
+
+IP_NW = "192.168.0.20" # The base network 192.168.0.20x/24
+
+MASTER_IP_START = 0
+NODE_IP_START = 3
+
+Vagrant.configure("2") do |config|
+
+# https://superuser.com/questions/701735/run-script-on-host-machine-during-vagrant-up
+# TODO Run a trigger that creates the hyper-v bridge switch
+
+    # use a box that supports hyper-v as provider
+    config.vm.box = "hashicorp/bionic64"
+
+    config.vm.box_check_update = false # check if useful
+
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # bridge is the name of the virtual switch in hyper-v
+  config.vm.network "public_network", bridge: "vagrant"
+
+  # Was not able to get that working yet with my domain user account.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # Provision Master Nodes
+  (1..NUM_MASTER_NODE).each do |i|
+      config.vm.define "kubemaster" do |node|
+        node.vm.provider "hyperv" do |hyperv|
+            hyperv.vmname = "kubemaster"
+            hyperv.memory = 2048
+            hyperv.cpus = 2
+            hyperv.enable_virtualization_extensions = true
+            hyperv.linked_clone = true
+        end
+        node.vm.hostname = "kubemaster"
+        NODE_IP = IP_NW + "#{MASTER_IP_START + i}"
+
+        # Hyper-V. Vagrant cannot enforce a static IP or automatically configure a NAT.
+        # The following lines are probably not very useful
+        node.vm.network "public_network", ip: NODE_IP
+        node.vm.network "forwarded_port", guest: 22, host: "#{2710 + i}"
+
+        node.vm.provision "setup-hosts", :type => "shell", :path => "scripts/setup-hosts.sh" do |s|
+          s.args = ["eth0", NODE_IP]
+        end
+      end
+  end
+
+  # Provision Worker Nodes
+  (1..NUM_WORKER_NODE).each do |i|
+    config.vm.define "kubenode0#{i}" do |node|
+        node.vm.provider "hyperv" do |hyperv|
+            hyperv.vmname = "kubenode0#{i}"
+            hyperv.memory = 2048
+            hyperv.cpus = 2
+            hyperv.enable_virtualization_extensions = true
+            hyperv.linked_clone = true
+        end
+        node.vm.hostname = "kubenode0#{i}"
+        NODE_IP = IP_NW + "#{NODE_IP_START + i}"
+
+        # Hyper-V. Vagrant cannot enforce a static IP or automatically configure a NAT.
+        # The following lines are probably not very useful
+        node.vm.network "public_network", ip: NODE_IP
+        node.vm.network "forwarded_port", guest: 22, host: "#{2720 + i}"
+
+        # this script writes the local hostname and ip to the /etc/hosts file
+        node.vm.provision "setup-hosts", :type => "shell", :path => "scripts/setup-hosts.sh" do |s|
+          s.args = ["eth0", NODE_IP]
+        end
+    end
+  end
+end
